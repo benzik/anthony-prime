@@ -1,3 +1,4 @@
+
 import React, { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import type { FileWithPreview } from '../types';
@@ -9,6 +10,10 @@ interface UploadZoneProps {
   files: FileWithPreview[];
   acceptedFileTypes: { [key: string]: string[] };
   isDisabled?: boolean;
+  supportsPaste?: boolean;
+  isHovered?: boolean;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }
 
 const UploadIcon = () => (
@@ -30,7 +35,7 @@ const TrashIcon = () => (
 );
 
 
-const UploadZone: React.FC<UploadZoneProps> = ({ title, onFilesAdded, onFileRemoved, files, acceptedFileTypes, isDisabled = false }) => {
+const UploadZone: React.FC<UploadZoneProps> = ({ title, onFilesAdded, onFileRemoved, files, acceptedFileTypes, isDisabled = false, supportsPaste = false, isHovered = false, onMouseEnter, onMouseLeave }) => {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (isDisabled) return;
     const filesWithPreview = acceptedFiles.map(file => Object.assign(file, {
@@ -45,13 +50,18 @@ const UploadZone: React.FC<UploadZoneProps> = ({ title, onFilesAdded, onFileRemo
     disabled: isDisabled,
   });
 
+  const handleRemoveClick = (event: React.MouseEvent, fileName: string) => {
+    event.stopPropagation();
+    onFileRemoved(fileName);
+  };
+
   const fileList = files.map(file => (
     <div key={file.name} className="flex items-center justify-between p-2.5 bg-slate-700/50 rounded-lg text-sm transition-colors hover:bg-slate-700">
       <div className="flex items-center gap-3 overflow-hidden">
         <FileIcon />
         <span className="truncate text-slate-300" title={file.name}>{file.name}</span>
       </div>
-      <button onClick={() => onFileRemoved(file.name)} className="p-1 rounded-full focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-slate-800">
+      <button onClick={(e) => handleRemoveClick(e, file.name)} className="p-1 rounded-full focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-slate-800">
         <TrashIcon />
       </button>
     </div>
@@ -59,8 +69,10 @@ const UploadZone: React.FC<UploadZoneProps> = ({ title, onFilesAdded, onFileRemo
 
   return (
     <div 
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
         className={`relative group flex flex-col p-6 bg-slate-800/70 border border-slate-700 rounded-xl shadow-lg transition-all duration-300
-        ${isDragActive ? 'border-blue-500 scale-105 shadow-blue-500/20' : ''} 
+        ${isDragActive || (isHovered && supportsPaste) ? 'border-blue-500 scale-105 shadow-blue-500/20' : ''} 
         ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-blue-600 hover:shadow-2xl'}`}
     >
       <h3 className="text-base font-semibold text-slate-200 mb-4 text-center">{title}</h3>
@@ -70,7 +82,8 @@ const UploadZone: React.FC<UploadZoneProps> = ({ title, onFilesAdded, onFileRemo
           <div className="text-center">
             <UploadIcon/>
             <p className="mt-2 text-sm text-slate-400">
-              <span className="font-semibold text-blue-500">Нажмите для загрузки</span> или перетащите
+              <span className="font-semibold text-blue-500">Нажмите для загрузки</span>
+              { supportsPaste && isHovered ? ' или вставьте' : ' или перетащите' }
             </p>
             <p className="text-xs text-slate-500 mt-1">
               {Object.keys(acceptedFileTypes).join(', ').replace(/image\//g, '').toUpperCase()}

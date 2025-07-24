@@ -6,6 +6,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { ProcessingStatus, UploadZoneKey, FileWithPreview } from '../types';
 import { CROP_CONFIGS } from '../constants';
 import { MILADENT_LOGO } from '../logo';
+import { MILADENT_FOOTER } from '../footer';
 
 // Set worker source for pdf.js, which is required for it to work correctly.
 // pdfjs-dist is loaded from esm.sh, so the worker should be too.
@@ -76,7 +77,6 @@ interface PdfImage {
 }
 
 const convertPdfToImages = (file: FileWithPreview, source: UploadZoneKey): Promise<PdfImage[]> => {
-  const isRadiologicalReport = source === UploadZoneKey.DIAGNOCAT_RADIOLOGICAL;
   const isCephalometricAnalysis = source === UploadZoneKey.CEPHALOMETRIC_ANALYSIS;
 
   return new Promise((resolve, reject) => {
@@ -94,7 +94,7 @@ const convertPdfToImages = (file: FileWithPreview, source: UploadZoneKey): Promi
           const promise = (async () => {
             const page = await pdf.getPage(i);
             const originalViewport = page.getViewport({ scale: 1.0 });
-            const viewport = page.getViewport({ scale: 3.0 }); // Increased for better quality
+            const viewport = page.getViewport({ scale: 2.0 }); // Reduced for better performance and memory usage
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             if (!context) {
@@ -112,20 +112,13 @@ const convertPdfToImages = (file: FileWithPreview, source: UploadZoneKey): Promi
             let outputWidth = originalViewport.width;
             let outputHeight = originalViewport.height;
 
-            if (isRadiologicalReport) {
-              // Cover the footer with a white rectangle.
-              context.fillStyle = 'white';
-              const footerHeightInPixels = 70 * 3.0; // 70 points from original PDF, scaled by 3
-              context.fillRect(0, canvas.height - footerHeightInPixels, canvas.width, footerHeightInPixels);
-            }
-
             if (isCephalometricAnalysis) {
               const logoImg = new Image();
               const p = new Promise(res => { logoImg.onload = res; });
               logoImg.src = MILADENT_LOGO;
               await p;
               
-              const scale = 3.0;
+              const scale = 2.0; // Reduced to match new viewport scale
               const logoWidth = 110 * scale;
               const logoHeight = logoWidth * (120 / 680);
 
@@ -135,7 +128,7 @@ const convertPdfToImages = (file: FileWithPreview, source: UploadZoneKey): Promi
               const logoX = (65 / 3) * scale;
               const logoY = ((65 / 3) + 4) * scale;
 
-              const rectangleX = logoX;
+              const rectangleX = logoX - 3;
               const rectangleY = logoY - 30; // raised by 15px
 
               context.fillStyle = 'white';
@@ -185,20 +178,25 @@ const convertPdfToImages = (file: FileWithPreview, source: UploadZoneKey): Promi
 };
 
 
-const addLogo = (doc: jsPDF) => {
-    const logoWidth = 40; 
-    // The logo's original aspect ratio is 680x120 pixels.
-    // We calculate the height based on a fixed width to prevent distortion.
-    const logoHeight = logoWidth * (120 / 680);
-    const margin = 10;
-    
+const addFooter = async (doc: jsPDF) => {
+    const footerImg = new Image();
+    const p = new Promise<void>(res => { footerImg.onload = () => res(); });
+    footerImg.src = MILADENT_FOOTER;
+    await p;
+
+    const footerRatio = footerImg.width / footerImg.height;
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
+
+    const footerHeight = pageWidth / footerRatio;
     
-    // Position in bottom right corner
-    const x = pageWidth - margin - logoWidth;
-    const y = pageHeight - margin - logoHeight;
-    doc.addImage(MILADENT_LOGO, 'SVG', x, y, logoWidth, logoHeight);
+    // Ensure footer is not placed outside the page
+    if (footerHeight > pageHeight) {
+        console.warn("Footer is taller than the page, scaling might be incorrect.");
+    }
+    const y = pageHeight - footerHeight;
+
+    doc.addImage(MILADENT_FOOTER, 'PNG', 0, y, pageWidth, footerHeight, undefined, 'FAST');
 };
 
 export const useFileProcessor = () => {
@@ -257,7 +255,6 @@ export const useFileProcessor = () => {
       // --- Process screenshots FIRST ---
       if (croppedImages.length > 0) {
         doc.addPage();
-        addLogo(doc);
         pageAdded = true;
 
         const MARGIN = 10;
@@ -279,8 +276,8 @@ export const useFileProcessor = () => {
 
           // If the current image doesn't fit on the current page, create a new one.
           if (currentPageY !== MARGIN && (currentPageY + imgHeight > A4_HEIGHT - MARGIN)) {
+              await addFooter(doc);
               doc.addPage();
-              addLogo(doc);
               currentPageY = MARGIN;
           }
 
@@ -288,30 +285,53 @@ export const useFileProcessor = () => {
           doc.addImage(imgData, 'PNG', x, currentPageY, imgWidth, imgHeight);
           currentPageY += imgHeight + PADDING_BETWEEN_IMAGES;
         }
+        await addFooter(doc);
       }
 
       // --- Process PDF pages SECOND ---
       const PT_TO_MM = 25.4 / 72;
 
       for (const pageData of pdfPagesData) {
-        const pageWidthMm = pageData.width * PT_TO_MM;
-        const pageHeightMm = pageData.height * PT_TO_MM;
-        
-        doc.addPage([pageWidthMm, pageHeightMm], 'p');
-        pageAdded = true;
-        
-        doc.addImage(pageData.imageData, 'PNG', 0, 0, pageWidthMm, pageHeightMm);
-        if (pageData.source !== UploadZoneKey.CEPHALOMETRIC_ANALYSIS) {
-            addLogo(doc);
+        if(pageData.source !== UploadZoneKey.CEPHALOMETRIC_ANALYSIS) {
+            const pageWidthMm = pageData.width * PT_TO_MM;
+            const pageHeightMm = pageData.height * PT_TO_MM;
+            
+            doc.addPage([pageWidthMm, pageHeightMm], 'p');
+            pageAdded = true;
+            
+            doc.addImage(pageData.imageData, 'PNG', 0, 0, pageWidthMm, pageHeightMm);
+
+            if (pageData.source === UploadZoneKey.DIAGNOCAT_RADIOLOGICAL) {
+                await addFooter(doc);
+            }
         }
       }
+      
+      // Process Cephalometric analysis last to keep its specific logic separate
+       for (const pageData of pdfPagesData) {
+        if(pageData.source === UploadZoneKey.CEPHALOMETRIC_ANALYSIS) {
+            const pageWidthMm = pageData.width * PT_TO_MM;
+            const pageHeightMm = pageData.height * PT_TO_MM;
+
+            doc.addPage([pageWidthMm, pageHeightMm], 'p');
+            pageAdded = true;
+            
+            doc.addImage(pageData.imageData, 'PNG', 0, 0, pageWidthMm, pageHeightMm);
+        }
+       }
+
 
       if (!pageAdded) {
         // This case should be handled by the check at the beginning, but as a safeguard.
         throw new Error("Нет файлов для обработки.");
       }
 
+      doc.autoPrint();
+
       const generatedPdfUrl = doc.output('bloburl');
+      if (!generatedPdfUrl) {
+          throw new Error("Не удалось сгенерировать PDF из-за большого размера файлов.");
+      }
       setPdfUrl(generatedPdfUrl.toString());
       setStatus('success');
     } catch (err) {

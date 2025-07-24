@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import UploadZone from './components/UploadZone';
 import { useFileProcessor } from './hooks/useFileProcessor';
 import { UploadZoneKey, FileWithPreview } from './types';
@@ -15,7 +15,7 @@ const Header = () => (
                 </svg>
                 <div>
                     <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Anthony Prime</h1>
-                    <p className="text-sm text-slate-400">for Miladent Clinic</p>
+                    <p className="text-sm text-slate-400">for Miladent Clinic by Benzik</p>
                 </div>
             </div>
         </div>
@@ -36,22 +36,77 @@ const App: React.FC = () => {
         [UploadZoneKey.DIAGNOCAT_RADIOLOGICAL]: [],
         [UploadZoneKey.CEPHALOMETRIC_ANALYSIS]: [],
     });
+    const [hoveredZone, setHoveredZone] = useState<UploadZoneKey | null>(null);
 
     const { processFiles, status, error, pdfUrl, reset: resetProcessor } = useFileProcessor();
 
-    const handleFilesAdded = (zone: UploadZoneKey) => (newFiles: FileWithPreview[]) => {
+    const handleFilesAdded = useCallback((zone: UploadZoneKey) => (newFiles: FileWithPreview[]) => {
         setFiles(prev => ({
             ...prev,
             [zone]: [...prev[zone], ...newFiles]
         }));
-    };
+    }, []);
 
-    const handleFileRemoved = (zone: UploadZoneKey) => (fileNameToRemove: string) => {
+    const handleFileRemoved = useCallback((zone: UploadZoneKey) => (fileNameToRemove: string) => {
         setFiles(prev => ({
             ...prev,
             [zone]: prev[zone].filter(file => file.name !== fileNameToRemove)
         }));
-    };
+    }, []);
+
+    useEffect(() => {
+        const handlePaste = (event: ClipboardEvent) => {
+            if (!hoveredZone) {
+                return;
+            }
+            
+            const zoneKey = hoveredZone;
+            const acceptedTypes = 
+                zoneKey === UploadZoneKey.DIAGNOCAT_SEGMENTATION || zoneKey === UploadZoneKey.MEDITLINK_SCANS
+                ? ACCEPTED_IMAGE_TYPES
+                : ACCEPTED_PDF_TYPES;
+            
+            const acceptedMimeTypes = Object.keys(acceptedTypes);
+            
+            const items = event.clipboardData?.items;
+            if (!items) {
+                return;
+            }
+
+            const pastedFiles: File[] = [];
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.kind === 'file' && acceptedMimeTypes.includes(item.type)) {
+                    const file = item.getAsFile();
+                    if (file) {
+                        pastedFiles.push(file);
+                    }
+                }
+            }
+
+            if (pastedFiles.length > 0) {
+                event.preventDefault();
+
+                const filesWithPreview: FileWithPreview[] = pastedFiles.map((file, i) => {
+                    const extension = file.type.split('/')[1]?.split('+')[0] || 'png';
+                    const safeExtension = extension.replace(/[^a-z0-9]/gi, '');
+                    const newName = `pasted_${Date.now()}_${i}.${safeExtension}`;
+                    const newFile = new File([file], newName, { type: file.type });
+                    
+                    return Object.assign(newFile, {
+                        preview: URL.createObjectURL(newFile)
+                    });
+                });
+                handleFilesAdded(zoneKey)(filesWithPreview);
+            }
+        };
+
+        document.body.addEventListener('paste', handlePaste);
+
+        return () => {
+            document.body.removeEventListener('paste', handlePaste);
+        };
+    }, [hoveredZone, handleFilesAdded]);
 
     const handleReset = () => {
         setFiles({
@@ -65,6 +120,13 @@ const App: React.FC = () => {
 
     const handleProcess = () => {
         processFiles(files);
+    };
+    
+    const handlePrint = () => {
+        if (!pdfUrl) {
+            return;
+        }
+        window.open(pdfUrl, '_blank');
     };
 
     const hasFilesToProcess = useMemo(() => 
@@ -82,7 +144,8 @@ const App: React.FC = () => {
     const primaryButtonClasses = "text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 focus:ring-purple-500";
     const secondaryButtonClasses = "text-white bg-sky-600 hover:bg-sky-500 focus:ring-sky-500";
     const tertiaryButtonClasses = "text-slate-200 bg-slate-700 hover:bg-slate-600 focus:ring-slate-500";
-
+    
+    const supportsPaste = () => true;
 
     return (
         <div className="min-h-screen bg-slate-900 text-slate-200 font-sans">
@@ -95,6 +158,10 @@ const App: React.FC = () => {
                         onFileRemoved={handleFileRemoved(UploadZoneKey.DIAGNOCAT_SEGMENTATION)}
                         files={files[UploadZoneKey.DIAGNOCAT_SEGMENTATION]}
                         acceptedFileTypes={ACCEPTED_IMAGE_TYPES}
+                        supportsPaste={supportsPaste()}
+                        isHovered={hoveredZone === UploadZoneKey.DIAGNOCAT_SEGMENTATION}
+                        onMouseEnter={() => setHoveredZone(UploadZoneKey.DIAGNOCAT_SEGMENTATION)}
+                        onMouseLeave={() => setHoveredZone(null)}
                     />
                     <UploadZone 
                         title="MEDIT Link сканы (screenshots)"
@@ -102,6 +169,10 @@ const App: React.FC = () => {
                         onFileRemoved={handleFileRemoved(UploadZoneKey.MEDITLINK_SCANS)}
                         files={files[UploadZoneKey.MEDITLINK_SCANS]}
                         acceptedFileTypes={ACCEPTED_IMAGE_TYPES}
+                        supportsPaste={supportsPaste()}
+                        isHovered={hoveredZone === UploadZoneKey.MEDITLINK_SCANS}
+                        onMouseEnter={() => setHoveredZone(UploadZoneKey.MEDITLINK_SCANS)}
+                        onMouseLeave={() => setHoveredZone(null)}
                     />
                     <UploadZone 
                         title="Diagnocat рентгенологический отчет (pdf)"
@@ -109,6 +180,10 @@ const App: React.FC = () => {
                         onFileRemoved={handleFileRemoved(UploadZoneKey.DIAGNOCAT_RADIOLOGICAL)}
                         files={files[UploadZoneKey.DIAGNOCAT_RADIOLOGICAL]}
                         acceptedFileTypes={ACCEPTED_PDF_TYPES}
+                        supportsPaste={supportsPaste()}
+                        isHovered={hoveredZone === UploadZoneKey.DIAGNOCAT_RADIOLOGICAL}
+                        onMouseEnter={() => setHoveredZone(UploadZoneKey.DIAGNOCAT_RADIOLOGICAL)}
+                        onMouseLeave={() => setHoveredZone(null)}
                     />
                     <UploadZone 
                         title="Цефалометрический анализ (КТ от Diagnocat) (pdf)"
@@ -116,6 +191,10 @@ const App: React.FC = () => {
                         onFileRemoved={handleFileRemoved(UploadZoneKey.CEPHALOMETRIC_ANALYSIS)}
                         files={files[UploadZoneKey.CEPHALOMETRIC_ANALYSIS]}
                         acceptedFileTypes={ACCEPTED_PDF_TYPES}
+                        supportsPaste={supportsPaste()}
+                        isHovered={hoveredZone === UploadZoneKey.CEPHALOMETRIC_ANALYSIS}
+                        onMouseEnter={() => setHoveredZone(UploadZoneKey.CEPHALOMETRIC_ANALYSIS)}
+                        onMouseLeave={() => setHoveredZone(null)}
                     />
                 </div>
 
@@ -169,7 +248,7 @@ const App: React.FC = () => {
                                     Сохранить PDF
                                 </a>
                                 <button
-                                    onClick={() => window.open(pdfUrl, '_blank')}
+                                    onClick={handlePrint}
                                     className={`${actionButtonClasses} ${secondaryButtonClasses}`}
                                 >
                                     Отправить на печать
